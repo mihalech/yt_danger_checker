@@ -1,0 +1,136 @@
+from __future__ import annotations
+
+import subprocess
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+
+import yt_dlp
+
+try:
+    from nudenet import NudeDetector
+except ImportError:
+    NudeDetector = None
+
+
+@dataclass
+class DangerResult:
+    nsfw_score: float
+    violence_score: float
+    danger_score: float
+    label: str
+
+
+class VideoDangerAnalyzer:
+    def __init__(self) -> None:
+        self.nude_detector = NudeDetector() if NudeDetector is not None else None
+
+    def analyze_video_url(self, video_url: str, duration_seconds: int | None = None) -> DangerResult:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            video_path = self._download_video(video_url, tmp_path)
+
+            frames_dir = tmp_path / "frames"
+            frames_dir.mkdir(exist_ok=True)
+
+            fps_value = self._choose_sampling_fps(duration_seconds)
+            self._extract_frames(video_path, frames_dir, fps_value)
+
+            nsfw_score = self._analyze_nsfw_frames(frames_dir)
+            violence_score = self._analyze_violence_frames(frames_dir)
+
+            danger_score = max(nsfw_score, violence_score)
+
+            if danger_score >= 0.7:
+                label = "18+"
+            elif danger_score >= 0.3:
+                label = "suspicious"
+            else:
+                label = "safe"
+
+            return DangerResult(
+                nsfw_score=round(nsfw_score, 3),
+                violence_score=round(violence_score, 3),
+                danger_score=round(danger_score, 3),
+                label=label,
+            )
+
+    def _download_video(self, video_url: str, output_dir: Path) -> Path:
+        output_template = str(output_dir / "%(id)s.%(ext)s")
+
+        ydl_opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "format": "bestvideo[height<=720]+bestaudio/best",
+            "outtmpl": output_template,
+            "noplaylist": True,
+        }
+
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(video_url, download=True)
+                return Path(ydl.prepare_filename(info))
+        except Exception as e:
+            print(f"С cookies не получилось: {e}")
+            return None
+
+    def _choose_sampling_fps(self, duration_seconds: int | None) -> float:
+        if duration_seconds is None or duration_seconds <= 0:
+            return 0.5
+        if duration_seconds <= 180:
+            return 1.0
+        if duration_seconds <= 600:
+            return 0.5
+        return 0.2
+
+    def _extract_frames(self, video_path: Path, frames_dir: Path, fps_value: float) -> None:
+        output_pattern = str(frames_dir / "frame_%06d.jpg")
+
+        cmd = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(video_path),
+            "-vf",
+            f"fps={fps_value}",
+            "-q:v",
+            "2",
+            output_pattern,
+        ]
+
+        subprocess.run(cmd, check=True)
+
+    def _analyze_nsfw_frames(self, frames_dir: Path) -> float:
+        if self.nude_detector is None:
+            print("self.nude_detector is None")
+            return 0.0
+
+        scores: list[float] = []
+
+        for frame_path in sorted(frames_dir.glob("*.jpg")):
+            try:
+                detections = self.nude_detector.detect(str(frame_path))
+            except Exception:
+                continue
+
+            frame_score = 0.0
+            for det in detections:
+                class_name = str(det.get("class", "")).lower()
+                score = float(det.get("score", 0.0))
+
+                if "exposed" in class_name:
+                    frame_score = max(frame_score, score)
+
+            scores.append(frame_score)
+
+        if not scores:
+            return 0.0
+
+        scores.sort(reverse=True)
+        top_scores = scores[: min(5, len(scores))]
+        return sum(top_scores) / len(top_scores)
+
+    def _analyze_violence_frames(self, frames_dir: Path) -> float:
+        return 0.0

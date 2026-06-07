@@ -1,0 +1,18 @@
+# Core HTTP and date parsing
+requests
+python-dateutil
+
+# Numerical processing and WAV audio analysis
+numpy
+scipy
+
+# YouTube metadata and video download
+yt-dlp
+yt-dlp-ejs
+
+# ML models used by danger moderation
+nudenet
+faster-whisper
+ultralytics
+tensorflow
+tensorflow-hub

@@ -1,0 +1,13 @@
+.env
+cookies.txt
+__pycache__/
+*.pyc
+*.pt
+*.webm
+*.mp4
+*.wav
+*.jpg
+*.jpeg
+*.png
+.venv/
+venv/
